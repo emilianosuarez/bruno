@@ -120,6 +120,88 @@ trait EloquentBuilderTrait
         // $value, $not, $key, $operator
         extract($filter);
 
+        if (str_contains($key, '.')) {
+            $segments = explode('.', $key);
+            $field = array_pop($segments);
+            $relation = implode('.', $segments);
+
+            $method = filter_var($or, FILTER_VALIDATE_BOOLEAN) ? 'orWhereHas' : 'whereHas';
+
+            return $queryBuilder->$method($relation, function ($relationQuery) use ($field, $operator, $value, $not) {
+                $dbType = $relationQuery->getConnection()->getDriverName();
+
+                $clauseOperator = null;
+                $databaseField = $field;
+
+                switch($operator) {
+                    case 'ct':
+                    case 'sw':
+                    case 'ew':
+                        $valueString = [
+                            'ct' => '%'.$value.'%',
+                            'ew' => '%'.$value,
+                            'sw' => $value.'%'
+                        ];
+
+                        $castToText = (($dbType === 'pgsql') ? 'TEXT' : 'CHAR');
+
+                        $databaseField = DB::raw(sprintf(
+                            'CAST(%s AS ' . $castToText . ')',
+                            $field
+                        ));
+
+                        $clauseOperator = ($not ? 'NOT':'') . (($dbType === 'pgsql') ? 'ILIKE' : 'LIKE');
+
+                        $value = $valueString[$operator];
+
+                        break;
+
+                    case 'eq':
+                    default:
+                        $clauseOperator = $not ? '!=' : '=';
+                        break;
+
+                    case 'gt':
+                        $clauseOperator = $not ? '<' : '>';
+                        break;
+
+                    case 'gte':
+                        $clauseOperator = $not ? '<' : '>=';
+                        break;
+
+                    case 'lte':
+                        $clauseOperator = $not ? '>' : '<=';
+                        break;
+
+                    case 'lt':
+                        $clauseOperator = $not ? '>' : '<';
+                        break;
+
+                    case 'in':
+                        if ($not) {
+                            $relationQuery->whereNotIn($field, (array) $value);
+                        } else {
+                            $relationQuery->whereIn($field, (array) $value);
+                        }
+                        return;
+
+                    case 'bt':
+                        if ($not) {
+                            $relationQuery->whereNotBetween($field, (array) $value);
+                        } else {
+                            $relationQuery->whereBetween($field, (array) $value);
+                        }
+                        return;
+                }
+
+                $relationQuery->where(
+                    $databaseField,
+                    $clauseOperator,
+                    $value
+                );
+            });
+        }
+
         $dbType = $queryBuilder->getConnection()->getDriverName();
 
         $tablePrefix = '';
